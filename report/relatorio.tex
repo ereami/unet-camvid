@@ -5,9 +5,11 @@
 \IfFileExists{portuguese.ldf}{\usepackage[brazil]{babel}}{%
   \AtBeginDocument{\renewcommand{\tablename}{Tabela}\renewcommand{\figurename}{Figura}}}
 \usepackage{mathptmx}
-\usepackage[margin=1.7cm,top=1.5cm,bottom=1.6cm]{geometry}
+\usepackage[margin=1.6cm,top=1.3cm,bottom=1.4cm]{geometry}
 \usepackage{booktabs,graphicx,xcolor,amsmath}
 \usepackage[hidelinks]{hyperref}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta,positioning}
 \usepackage{titlesec,enumitem}
 \setlength{\columnsep}{0.6cm}
 \titlespacing*{\section}{0pt}{6pt}{3pt}
@@ -21,8 +23,10 @@
 
 \title{\vspace{-1.2cm}\Large U-Net treinada do zero para segmentação semântica urbana:\\
 um estudo de ablação no CamVid\\[2pt]
-\normalsize Relatório de progresso --- \preencher{Disciplina}}
-\author{Elder \preencher{sobrenome} \quad ---\quad \preencher{programa / instituição}}
+\normalsize Relatório de progresso ---
+\href{https://edisciplinas.usp.br/course/view.php?id=143903}{MAC5921/MAC0497 -- Deep Learning (2026)}\\
+\normalsize Docente: \href{https://edisciplinas.usp.br/user/view.php?id=288715&course=1}{Nina S. T. Hirata}}
+\author{Elderclei Regis Reami}
 \date{24 de outubro de 2026}
 
 \begin{document}
@@ -89,8 +93,66 @@ Void (ign.) & 3,95 & Pole & 0,98 \\
 \section{Metodologia}
 \textbf{Modelo.} U-Net com 4 níveis de \emph{downsampling}, blocos
 conv3$\times$3--BN--ReLU duplos, \emph{upsampling} por convolução transposta e largura
-base de 32 filtros (32$\rightarrow$512; $\approx$\preencher{7,8}M parâmetros). Na
-variante sem skip, o decodificador recebe apenas o mapa reamostrado.
+base de 32 filtros (32$\rightarrow$512; 7,76M parâmetros), conforme a
+Fig.~\ref{fig:unet}. Na variante sem skip, o decodificador recebe apenas o mapa
+reamostrado.
+
+\begin{figure}[t]
+\centering
+\begin{tikzpicture}[
+  blk/.style={draw, fill=blue!12, minimum width=0.95cm, minimum height=0.42cm,
+              inner sep=1pt, font=\scriptsize},
+  dec/.style={blk, fill=teal!15},
+  io/.style={font=\scriptsize, inner sep=1pt},
+  dn/.style={-{Stealth[length=3pt]}, red!70!black, thick},
+  upa/.style={-{Stealth[length=3pt]}, green!50!black, thick},
+  sk/.style={-{Stealth[length=3pt]}, gray, dashed},
+  res/.style={font=\tiny, gray!80!black}]
+  \def\dy{0.66}
+  \foreach \i/\c in {0/32,1/64,2/128,3/256}{
+    \node[blk] (e\i) at (0,-\i*\dy) {\c};
+    \node[dec] (d\i) at (3.9,-\i*\dy) {\c};
+    \draw[sk] (e\i) -- node[above, font=\tiny, black!70]{concat} (d\i);
+  }
+  \node[blk, fill=orange!20] (b) at (1.95,-4*\dy) {512};
+  \foreach \i/\j in {0/1,1/2,2/3}{
+    \draw[dn] (e\i.south) -- (e\j.north);
+    \draw[upa] (d\j.north) -- (d\i.south);
+  }
+  \draw[dn] (e3.south) |- (b.west);
+  \draw[upa] (b.east) -| (d3.south);
+  \foreach \i/\r in {0/{$H$},1/{$H/2$},2/{$H/4$},3/{$H/8$}}
+    \node[res, left=1pt of e\i] {\r};
+  \node[res, below=0pt of b] {$H/16$};
+  \node[io, above=7pt of e0] (in) {entrada $3\times H\times W$};
+  \draw[-{Stealth[length=3pt]}] (in) -- (e0);
+  \node[io, above=7pt of d0] (out) {saída $11\times H\times W$};
+  \draw[-{Stealth[length=3pt]}] (d0) -- node[right, font=\tiny]{conv $1{\times}1$} (out);
+  % legenda
+  \begin{scope}[shift={(5.0,-0.15)}, font=\tiny]
+    \node[blk, minimum width=0.35cm, minimum height=0.22cm, label=right:{(conv3$\times$3--BN--ReLU)$\times$2}] at (0,0) {};
+    \draw[dn] (-0.18,-0.42) -- (0.18,-0.42) node[right, black]{max-pool 2$\times$2};
+    \draw[upa] (-0.18,-0.72) -- (0.18,-0.72) node[right, black]{conv transp. 2$\times$2};
+    \draw[sk] (-0.18,-1.02) -- (0.18,-1.02) node[right, black]{skip (Q1)};
+  \end{scope}
+\end{tikzpicture}
+\caption{U-Net implementada (\texttt{src/model.py}). Os números indicam canais de
+saída de cada bloco; $H\times W$ é 256$\times$256 no treino e 368$\times$480 (com
+\emph{padding}) na avaliação.}
+\label{fig:unet}
+\end{figure}
+
+\textbf{Diferenças em relação ao artigo original \cite{ronneberger}.} A topologia é
+a mesma (4 níveis, blocos de duas conv.\ 3$\times$3, \emph{max-pooling},
+convolução transposta 2$\times$2 que reduz os canais pela metade, concatenação e
+conv.\ 1$\times$1 final). As diferenças são: (i) convoluções com \emph{padding}, de modo
+que a saída tem o tamanho da entrada e a concatenação dispensa recortes, em vez de
+convoluções sem \emph{padding} e da estratégia \emph{overlap-tile}; (ii) metade da
+largura (32$\rightarrow$512 em vez de 64$\rightarrow$1024; 7,76M contra
+$\approx$31M parâmetros), adequada a 367 imagens; (iii) BatchNorm após cada convolução
+e sem dropout; (iv) treino com AdamW e batch 8, em vez de SGD com momento 0,99 e
+batch de uma imagem grande; (v) 11 classes, em vez de 2, e sem o mapa de pesos de
+borda do artigo.
 
 \textbf{Treino.} AdamW (lr $10^{-3}$, weight decay $10^{-4}$), \emph{cosine annealing},
 120 épocas, batch 8, precisão mista. Recortes aleatórios de 256$\times$256 em todas as
@@ -101,6 +163,10 @@ variantes; augmentation = flip horizontal + brilho/contraste. Pesos da CE ponder
 épocas); conjunto de teste avaliado \emph{uma única vez}, na imagem inteira.
 \textbf{Métricas:} mIoU (principal), IoU por classe e acurácia de pixel, com
 média $\pm$ desvio-padrão sobre 3 seeds.
+
+\textbf{Ambiente computacional.} Processamento feito diretamente no Google Colab,
+em uma máquina do Google Compute Engine com 12,7\,GB de RAM, 112,6\,GB de disco e
+GPU NVIDIA Tesla T4 de 15\,GB; execução em Python 3.13.16.
 
 \section{Plano de experimentos}
 \begin{table}[h]
@@ -121,75 +187,102 @@ base16 / base64 & largura 16 / 64 & Q4 \\
 \end{tabular}
 \end{table}
 
-\textbf{Orçamento.} Medido no smoke test: \preencher{X} s/época em GPU
-\preencher{L4}, ou $\approx$\preencher{Y} min por treino. As 5 variantes prioritárias
-$\times$ 3 seeds somam $\approx$\preencher{15$\times$Y} min; Q4 roda se houver saldo de
-unidades de computação.
-
-\textbf{Análises previstas:} tabela de mIoU (média $\pm$ dp); IoU por classe, com foco nas
-classes raras; curvas de treino e validação (overfitting, Q3); exemplos qualitativos dos
-melhores e piores casos.
+\textbf{Planejamento de recursos.} O custo total foi projetado antes de disparar o
+plano completo, a partir do tempo por época medido no smoke test (2 épocas):
+\[
+T_{\text{total}} \approx N_{\text{var}} \times N_{\text{seeds}} \times E \times t_{\text{época}},
+\]
+com $E=120$ épocas. No smoke test, as 2 épocas (com validação em ambas) levaram
+0,2\,min, ou $t_{\text{época}}\approx6$\,s, o que projeta
+$120\times6\,\text{s}\approx12$\,min por treino. A projeção é conservadora, pois no
+plano a validação ocorre só a cada 2 épocas e a 1.ª época inclui o aquecimento da GPU.
+Na T4, os 15 treinos levaram \textbf{9,7 a 11,8 min} cada, dentro do previsto. As 5 variantes prioritárias
+$\times$ 3 seeds (15 treinos) somam, portanto, \textbf{$\approx$2,3--3,0\,h} de GPU.
+Q4 roda se houver saldo (base64, com $\approx$4$\times$ mais parâmetros, não escala
+linearmente). Checkpoints no Drive permitem dividir o plano em várias sessões.
 
 \section{Código}
-Repositório: \url{https://github.com/SEU_USUARIO/unet-camvid} \preencher{atualizar link}.
-Uma função \texttt{run(Config)} treina qualquer variante, registra curvas em CSV,
-salva checkpoints no Google Drive (retomável) e acrescenta o resultado de teste a
-\texttt{results.csv}; o notebook \texttt{camvid\_unet.ipynb} executa todo o roteiro
-no Colab.
+Repositório: \url{https://github.com/ereami/unet-camvid}.
+Uma função \texttt{run(Config)} treina qualquer variante, com curvas em CSV e
+checkpoints retomáveis no Drive; o notebook \texttt{camvid\_unet.ipynb} executa o
+roteiro completo no Colab.
 
-\section{Primeiros resultados}
-Baseline, seed 0 (Tab.~\ref{tab:prelim}, Figs.~\ref{fig:prelim} e \ref{fig:exemplos}).
+\section{Resultados (Q1--Q3)}
+As 5 variantes prioritárias foram concluídas com 3 seeds cada (15 treinos, 9,7 a
+11,8\,min cada na T4), em linha com a projeção da Seção~4.
 
 \begin{table}[h]
 \centering\small
-\caption{Baseline (seed 0) no conjunto de teste.}
-\label{tab:prelim}
-\begin{tabular}{lc}
+\caption{Teste, média sobre 3 seeds ($\pm$ dp no mIoU). Colunas à direita: IoU por
+classe. Em negrito, o melhor resultado.}
+\label{tab:res}
+\setlength{\tabcolsep}{3pt}
+\begin{tabular}{lcccccc}
 \toprule
-mIoU validação (melhor) & \preencher{0,xx} \\
-mIoU teste & \preencher{0,xx} \\
-Acurácia de pixel (teste) & \preencher{0,xx} \\
-Tempo de treino & \preencher{xx} min \\
+Variante & mIoU & Acc. & Build. & Pole & Ped. & Bicy. \\
 \midrule
-IoU mais alto (classe) & \preencher{Road 0,xx} \\
-IoU mais baixo (classe) & \preencher{Bicyclist 0,xx} \\
+baseline & 0,532\,$\pm$\,0,011 & 0,879 & 0,766 & 0,197 & 0,303 & 0,210 \\
+no\_skip & 0,471\,$\pm$\,0,008 & 0,870 & 0,756 & 0,000 & 0,152 & 0,099 \\
+wce & 0,492\,$\pm$\,0,011 & 0,809 & 0,593 & 0,184 & 0,284 & 0,147 \\
+ce\_dice & \textbf{0,581\,$\pm$\,0,006} & \textbf{0,888} & \textbf{0,784} & \textbf{0,254} & \textbf{0,440} & \textbf{0,372} \\
+no\_aug & 0,532\,$\pm$\,0,010 & 0,876 & 0,751 & 0,200 & 0,302 & 0,216 \\
 \bottomrule
 \end{tabular}
 \end{table}
 
 \begin{figure}[h]
 \centering
-% Substitua pelo arquivo gerado no notebook:
-% \includegraphics[width=\columnwidth]{fig_curvas_baseline.png}
-\fbox{\parbox[c][2.6cm][c]{0.94\columnwidth}{\centering\small
-\preencher{fig\_curvas\_baseline.png: loss de treino e mIoU de validação por época}}}
-\caption{Curvas de treino do baseline.}
-\label{fig:prelim}
+\includegraphics[width=\columnwidth]{fig_curvas_todas.png}
+\caption{Loss de treino e mIoU de validação (seed 0). A curva \texttt{base16}
+corresponde a uma execução de Q4 interrompida na época 36.}
+\label{fig:curvas}
 \end{figure}
 
 \begin{figure}[h]
 \centering
-% \includegraphics[width=\columnwidth]{fig_exemplos_baseline.png}
-\fbox{\parbox[c][3.6cm][c]{0.94\columnwidth}{\centering\small
-\preencher{fig\_exemplos\_baseline.png: imagem | anotação | predição (3 exemplos do teste)}}}
-\caption{Exemplos qualitativos do baseline no conjunto de teste.}
+\includegraphics[width=0.92\columnwidth]{fig_exemplos_baseline_2l.png}
+\caption{Exemplos do baseline no conjunto de teste (paleta oficial do CamVid).}
 \label{fig:exemplos}
 \end{figure}
 
-\textbf{Leitura inicial:} \preencher{2--3 frases: o modelo convergiu? há sinal de
-overfitting? quais classes falham e por quê (tamanho, frequência)?} Como referência,
-a U-Net do zero nessa divisão tende a ficar abaixo de modelos pré-treinados; esperamos
-mIoU na faixa de 0,50--0,60.
+\textbf{Q1 (skip connections).} Removê-las reduz o mIoU em 0,061 ($\approx$6 dp). A
+perda se concentra nas classes finas: \emph{Pole} vai a zero nas 3 seeds e
+\emph{Pedestrian} e \emph{Bicyclist} caem pela metade, enquanto \emph{Road} e
+\emph{Building} quase não mudam. A acurácia de pixel cai menos de 1 ponto, o que
+mostra por que ela engana sob desbalanceamento.
+
+\textbf{Q2 (desbalanceamento).} CE + Dice é a melhor variante (+0,049 de mIoU) e
+melhora \emph{todas} as classes raras (\emph{Bicyclist} 0,21$\rightarrow$0,37). Já a
+CE ponderada \emph{piora} o mIoU: os pesos altos das classes raras geram falsos
+positivos, que o IoU penaliza, e as classes dominantes perdem muito (\emph{Building}
+0,77$\rightarrow$0,59; acurácia 0,88$\rightarrow$0,81) sem ganho nas raras.
+Ponderar pela frequência, portanto, não é o mesmo que otimizar a sobreposição.
+
+\textbf{Q3 (augmentation).} Sem flip e brilho/contraste o mIoU de teste é idêntico
+(0,532). A loss de treino fica mais baixa, mas o mIoU de validação não cai
+(Fig.~\ref{fig:curvas}), ou seja, não há overfitting mensurável. Ressalva: o recorte
+aleatório 256$\times$256, mantido nas duas condições, já é uma augmentation forte;
+a hipótese de Q3 não se confirma \emph{dado} esse recorte.
+
+\textbf{Validação vs.\ teste.} O mIoU de teste fica $\approx$0,10--0,12 abaixo do de
+validação em todas as variantes, o que atribuímos ao viés de seleção do checkpoint e a
+diferenças entre as sequências de vídeo; como é sistemático, não altera a ordenação.
 
 \section{Próximos passos e riscos}
 \begin{itemize}
-  \item Rodar as variantes de Q1--Q3 com 3 seeds e consolidar as tabelas.
-  \item \textbf{Risco:} diferenças entre variantes menores que a variação entre
-  seeds; nesse caso, reportamos a ausência de efeito em vez de forçar conclusões.
-  \item \textbf{Risco:} cota de GPU; mitigado por checkpoints retomáveis e Q4 opcional.
+  \item \textbf{Q4 (capacidade):} \texttt{base16} (3 seeds) e \texttt{base64}, que tem
+  $\approx$4$\times$ mais parâmetros e custo estimado de 3--4$\times$ por treino.
+  \item Separar o efeito do recorte aleatório em Q3 (treino em imagem inteira).
+  \item Combinar CE + Dice com as demais conclusões numa configuração final.
 \end{itemize}
 
-\begingroup\small
+\section{Declaração de uso de IA}
+Neste trabalho foi utilizado o Claude Opus 5.5 (Anthropic) para identificar datasets
+adequados para segmentação, identificar perguntas de estudo pertinentes a esse tipo de
+problema e estruturar o código necessário para pré-processar o dataset e executar os
+experimentos que respondem a essas perguntas.
+
+\begingroup\footnotesize
 \renewcommand{\section}[2]{\vspace{2pt}\noindent\textbf{Referências}\par}
 \begin{thebibliography}{9}\setlength{\itemsep}{0pt}
 \bibitem{ronneberger} O.~Ronneberger, P.~Fischer, T.~Brox. U-Net: Convolutional networks for
