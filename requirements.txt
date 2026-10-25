@@ -1,0 +1,6 @@
+# Já presentes no Colab; listados para uso local
+torch>=2.1
+numpy
+pandas
+matplotlib
+pillow
